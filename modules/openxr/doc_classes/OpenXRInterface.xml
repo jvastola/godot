@@ -91,6 +91,18 @@
 				Returns the current state of our OpenXR session.
 			</description>
 		</method>
+		<method name="get_system_info" qualifiers="override">
+			<return type="Dictionary" />
+			<description>
+				Returns a [Dictionary] with OpenXR system information. See also [method XRInterface.get_system_info].
+				The following keys are provided:
+				- [code]XRRuntimeName[/code] ([String]): The name of the OpenXR runtime (e.g., "SteamVR/OpenXR", "Oculus", "Monado").
+				- [code]XRRuntimeVersion[/code] ([String]): The version of the OpenXR runtime as a string.
+				- [code]OpenXRSystemName[/code] ([String]): The system/device name provided by the runtime (e.g., "Oculus Quest 2", "HTC Vive").
+				- [code]OpenXRVendorID[/code] ([int]): The PCI vendor ID of the GPU/device manufacturer.
+				[b]Note:[/b] This information is only available after [method XRInterface.initialize] has been successfully called.
+			</description>
+		</method>
 		<method name="is_action_set_active" qualifiers="const">
 			<return type="bool" />
 			<param index="0" name="name" type="String" />
