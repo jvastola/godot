@@ -183,7 +183,7 @@
 		</member>
 		<member name="render_target_size_multiplier" type="float" setter="set_render_target_size_multiplier" getter="get_render_target_size_multiplier" default="1.0">
 			The render size multiplier for the current HMD. Must be set before the interface has been initialized.
-			Values are clamped between 0.1 and 4.0. Lower values (e.g., 0.5-0.8) improve performance at the cost of visual quality. Higher values (e.g., 1.2-2.0) improve visual quality but reduce performance. Use with caution on mobile/standalone headsets.
+			Lower values (e.g., 0.5-0.8) improve performance at the cost of visual quality. Higher values (e.g., 1.2-2.0) improve visual quality but reduce performance. Values outside the typical range of 0.5-2.0 should be used with caution.
 		</member>
 		<member name="vrs_min_radius" type="float" setter="set_vrs_min_radius" getter="get_vrs_min_radius" default="20.0">
 			The minimum radius around the focal point where full quality is guaranteed if VRS is used as a percentage of screen size.

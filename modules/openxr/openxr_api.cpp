@@ -2666,11 +2666,6 @@ double OpenXRAPI::get_render_target_size_multiplier() const {
 }
 
 void OpenXRAPI::set_render_target_size_multiplier(double multiplier) {
-	// Clamp multiplier to reasonable range to avoid performance issues or invalid render targets
-	// Values below 0.1 would result in unusably low resolution
-	// Values above 4.0 would likely cause performance issues and excessive memory usage
-	multiplier = CLAMP(multiplier, 0.1, 4.0);
-	
 	if (multiplier != render_target_size_multiplier) {
 		render_target_size_multiplier = multiplier;
 		set_render_state_multiplier(multiplier);
