@@ -162,7 +162,7 @@
 			The display refresh rate for the current HMD. Only functional if this feature is supported by the OpenXR runtime and after the interface has been initialized.
 		</member>
 		<member name="foveation_dynamic" type="bool" setter="set_foveation_dynamic" getter="get_foveation_dynamic" default="false">
-			Enable dynamic foveation adjustment, the interface must be initialized before this is accessible. If enabled foveation will automatically adjusted between low and [member foveation_level].
+			Enable dynamic foveation adjustment, the interface must be initialized before this is accessible. If enabled, foveation will automatically adjust between low and [member foveation_level].
 			[b]Note:[/b] Only works on the Compatibility renderer.
 		</member>
 		<member name="foveation_level" type="int" setter="set_foveation_level" getter="get_foveation_level" default="0">
@@ -171,6 +171,7 @@
 		</member>
 		<member name="render_target_size_multiplier" type="float" setter="set_render_target_size_multiplier" getter="get_render_target_size_multiplier" default="1.0">
 			The render size multiplier for the current HMD. Must be set before the interface has been initialized.
+			Values are clamped between 0.1 and 4.0. Lower values (e.g., 0.5-0.8) improve performance at the cost of visual quality. Higher values (e.g., 1.2-2.0) improve visual quality but reduce performance. Use with caution on mobile/standalone headsets.
 		</member>
 		<member name="vrs_min_radius" type="float" setter="set_vrs_min_radius" getter="get_vrs_min_radius" default="20.0">
 			The minimum radius around the focal point where full quality is guaranteed if VRS is used as a percentage of screen size.
@@ -274,7 +275,7 @@
 			The session is about to be lost. [signal session_loss_pending] is emitted when we change to this state.
 		</constant>
 		<constant name="SESSION_STATE_EXITING" value="8" enum="SessionState">
-			The OpenXR instance is about to be destroyed and we're existing. [signal instance_exiting] is emitted when we change to this state.
+			The OpenXR instance is about to be destroyed and we're exiting. [signal instance_exiting] is emitted when we change to this state.
 		</constant>
 		<constant name="HAND_LEFT" value="0" enum="Hand">
 			Left hand.
