@@ -970,9 +970,14 @@ double OpenXRInterface::get_render_target_size_multiplier() const {
 void OpenXRInterface::set_render_target_size_multiplier(double multiplier) {
 	if (openxr_api == nullptr) {
 		return;
-	} else {
-		openxr_api->set_render_target_size_multiplier(multiplier);
 	}
+	
+	if (openxr_api->is_initialized()) {
+		WARN_PRINT("OpenXR: Cannot change render_target_size_multiplier after the interface has been initialized.");
+		return;
+	}
+	
+	openxr_api->set_render_target_size_multiplier(multiplier);
 }
 
 bool OpenXRInterface::is_foveation_supported() const {

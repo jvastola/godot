@@ -2018,7 +2018,7 @@ bool OpenXRAPI::poll_events() {
 			case XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING: {
 				XrEventDataInstanceLossPending *event = (XrEventDataInstanceLossPending *)&runtimeEvent;
 
-				// TODO We get this event if we're about to loose our OpenXR instance.
+				// TODO We get this event if we're about to lose our OpenXR instance.
 				// We should queue exiting Godot at this point.
 
 				print_verbose(String("OpenXR EVENT: instance loss pending at ") + itos(event->lossTime));
@@ -2666,8 +2666,10 @@ double OpenXRAPI::get_render_target_size_multiplier() const {
 }
 
 void OpenXRAPI::set_render_target_size_multiplier(double multiplier) {
-	render_target_size_multiplier = multiplier;
-	set_render_state_multiplier(multiplier);
+	if (multiplier != render_target_size_multiplier) {
+		render_target_size_multiplier = multiplier;
+		set_render_state_multiplier(multiplier);
+	}
 }
 
 Rect2i OpenXRAPI::get_render_region() const {
