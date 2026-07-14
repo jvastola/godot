@@ -84,6 +84,7 @@
 #include "editor/gui/editor_about.h"
 #include "editor/gui/editor_bottom_panel.h"
 #include "editor/gui/editor_file_dialog.h"
+#include "editor/gui/editor_icon_manager.h"
 #include "editor/gui/editor_quick_open_dialog.h"
 #include "editor/gui/editor_title_bar.h"
 #include "editor/gui/editor_toaster.h"
@@ -486,8 +487,9 @@ void EditorNode::_update_from_settings() {
 		Viewport::DefaultCanvasItemTextureRepeat tr = (Viewport::DefaultCanvasItemTextureRepeat)current_repeat;
 		scene_root->set_default_canvas_item_texture_repeat(tr);
 	}
+	bool allow_fallback = GLOBAL_GET("internationalization/locale/allow_fallback");
 	String current_fallback_locale = GLOBAL_GET("internationalization/locale/fallback");
-	if (current_fallback_locale != TranslationServer::get_singleton()->get_fallback_locale()) {
+	if (allow_fallback && current_fallback_locale != TranslationServer::get_singleton()->get_fallback_locale()) {
 		TranslationServer::get_singleton()->set_fallback_locale(current_fallback_locale);
 		Ref<TranslationDomain> domain = TranslationServer::get_singleton()->get_main_domain();
 		if (!domain->is_enabled()) {
@@ -6587,7 +6589,7 @@ bool EditorNode::validate_custom_directory() {
 
 void EditorNode::run_editor_script(const Ref<Script> &p_script) {
 	Error err = p_script->reload(true); // Always hard reload the script before running.
-	if (err != OK || !p_script->is_valid()) {
+	if (err != OK || !p_script->is_script_valid()) {
 		EditorToaster::get_singleton()->popup_str(TTR("Cannot run the script because it contains errors, check the output log."), EditorToaster::SEVERITY_WARNING);
 		return;
 	}
@@ -7197,8 +7199,6 @@ void EditorNode::reload_scene(const String &p_path) {
 }
 
 void EditorNode::find_all_instances_inheriting_path_in_node(Node *p_root, Node *p_node, const String &p_instance_path, HashSet<Node *> &p_instance_list) {
-	String scene_file_path = p_node->get_scene_file_path();
-
 	bool valid_instance_found = false;
 
 	// Attempt to find all the instances matching path we're going to reload.
@@ -8385,6 +8385,7 @@ HashMap<String, Variant> EditorNode::get_initial_settings() {
 	HashMap<String, Variant> settings;
 	settings["display/window/stretch/aspect"] = "expand";
 	settings["display/window/stretch/mode"] = "canvas_items";
+	settings["input_devices/joypads/ignore_joypad_on_unfocused_application"] = true;
 	settings["physics/3d/physics_engine"] = "Jolt Physics";
 	settings["rendering/rendering_device/driver.windows"] = "d3d12";
 	return settings;
@@ -8701,6 +8702,9 @@ EditorNode::EditorNode() {
 
 	gui_base = memnew(Panel);
 	add_child(gui_base);
+
+	icon_manager = memnew(EditorIconManager);
+	gui_base->add_child(icon_manager);
 
 	// Take up all screen.
 	gui_base->set_anchors_and_offsets_preset(Control::PRESET_FULL_RECT);
