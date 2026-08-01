@@ -9023,6 +9023,11 @@ void RenderingDevice::_set_max_fps(int p_max_fps) {
 }
 
 RenderingDevice *RenderingDevice::create_local_device() {
+	if (driver != nullptr && driver->get_driver_workarounds().disable_local_devices) {
+		WARN_PRINT_ONCE("Local RenderingDevices are disabled on this Vulkan driver; the requesting subsystem must use its CPU fallback.");
+		return nullptr;
+	}
+
 	RenderingDevice *rd = memnew(RenderingDevice);
 	if (rd->initialize(context) != OK) {
 		memdelete(rd);

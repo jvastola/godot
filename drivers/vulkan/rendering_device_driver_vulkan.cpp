@@ -737,12 +737,25 @@ void RenderingDeviceDriverVulkan::_check_driver_workarounds(const VkPhysicalDevi
 				(p_device_properties.driverVersion < reset_descriptor_pool_broken_driver_begin || p_device_properties.driverVersion > reset_descriptor_pool_fixed_driver_begin);
 	}
 
-	if (p_driver_properties != nullptr) {
-		// Workaround for Adreno drivers where ubershaders with a lot of constant literals crash the compiler.
-		driver_workarounds.disable_ubershaders =
-				p_device_properties.vendorID == RenderingContextDriver::Vendor::VENDOR_QUALCOMM &&
-				strstr(p_driver_properties->driverInfo, "Compiler Version: EV031.32.02.") != nullptr;
-	}
+	// Workaround for Adreno drivers where ubershaders with a lot of constant
+	// literals crash the compiler. Quest 3's E031.50.14 driver rejects these
+	// pipelines and can later crash in queue submission even when Godot skips
+	// the failed draw.
+	const bool is_qualcomm = p_device_properties.vendorID == RenderingContextDriver::Vendor::VENDOR_QUALCOMM;
+	const bool is_quest_3_adreno_740 =
+			is_qualcomm &&
+			strstr(p_device_properties.deviceName, "Adreno (TM) 740") != nullptr &&
+			strstr(p_device_properties.deviceName, "Turnip") == nullptr;
+	const bool has_affected_legacy_compiler =
+			is_qualcomm &&
+			p_driver_properties != nullptr &&
+			strstr(p_driver_properties->driverInfo, "Compiler Version: EV031.32.02.") != nullptr;
+	driver_workarounds.disable_ubershaders = is_quest_3_adreno_740 || has_affected_legacy_compiler;
+
+	// Meta Quest's proprietary Adreno Vulkan driver does not reliably support
+	// Godot creating a second logical device. Optional subsystems such as the
+	// voxel module must fall back to their CPU implementation instead.
+	driver_workarounds.disable_local_devices = is_quest_3_adreno_740;
 
 	// Workaround for a bug in NVIDIA drivers where submitting a render pass with no bound pipeline and an attachment using the "Don't Care" store operation causes a crash.
 	driver_workarounds.avoid_store_op_dont_care_in_draw_list_with_no_bound_pipeline = (p_device_properties.vendorID == RenderingContextDriver::Vendor::VENDOR_NVIDIA);

@@ -494,7 +494,7 @@ void RenderForwardClustered::_render_list_template(RenderingDevice::DrawListID p
 		RID vertex_array_rd;
 		RID index_array_rd;
 		RID pipeline_rd;
-		const uint32_t ubershader_iterations = 2;
+		const uint32_t ubershader_iterations = disable_ubershaders ? 1 : 2;
 		bool pipeline_valid = false;
 		while (pipeline_key.ubershader < ubershader_iterations) {
 			// Skeleton and blend shape.
@@ -521,7 +521,7 @@ void RenderForwardClustered::_render_list_template(RenderingDevice::DrawListID p
 
 			if (shader != prev_shader || pipeline_hash != prev_pipeline_hash) {
 				RSE::PipelineSource pipeline_source = pipeline_key.ubershader ? RSE::PIPELINE_SOURCE_DRAW : RSE::PIPELINE_SOURCE_SPECIALIZATION;
-				pipeline_rd = shader->pipeline_hash_map.get_pipeline(pipeline_key, pipeline_hash, pipeline_key.ubershader, pipeline_source);
+				pipeline_rd = shader->pipeline_hash_map.get_pipeline(pipeline_key, pipeline_hash, pipeline_key.ubershader == (ubershader_iterations - 1), pipeline_source);
 
 				if (pipeline_rd.is_valid()) {
 					pipeline_valid = true;
@@ -4655,6 +4655,10 @@ static RD::FramebufferFormatID _get_reflection_probe_depth_framebuffer_format_fo
 }
 
 void RenderForwardClustered::_mesh_compile_pipeline_for_surface(SceneShaderForwardClustered::ShaderData *p_shader, void *p_mesh_surface, bool p_ubershader, bool p_instanced_surface, RSE::PipelineSource p_source, SceneShaderForwardClustered::ShaderData::PipelineKey &r_pipeline_key, Vector<ShaderPipelinePair> *r_pipeline_pairs) {
+	if (disable_ubershaders && p_ubershader) {
+		return;
+	}
+
 	RendererRD::MeshStorage *mesh_storage = RendererRD::MeshStorage::get_singleton();
 	uint64_t input_mask = p_shader->get_vertex_input_mask(r_pipeline_key.version, r_pipeline_key.color_pass_flags, p_ubershader);
 	bool pipeline_motion_vectors = r_pipeline_key.color_pass_flags & SceneShaderForwardClustered::PIPELINE_COLOR_PASS_FLAG_MOTION_VECTORS;
@@ -5102,6 +5106,12 @@ void RenderForwardClustered::_update_shader_quality_settings() {
 
 RenderForwardClustered::RenderForwardClustered() {
 	singleton = this;
+	disable_ubershaders = RD::get_singleton()->get_driver_workarounds().disable_ubershaders;
+	if (disable_ubershaders) {
+		print_verbose("Ubershaders: Disabled");
+	} else {
+		print_verbose("Ubershaders: Enabled");
+	}
 
 	/* SCENE SHADER */
 
