@@ -755,7 +755,10 @@ void RenderingDeviceDriverVulkan::_check_driver_workarounds(const VkPhysicalDevi
 	// Meta Quest's proprietary Adreno Vulkan driver does not reliably support
 	// Godot creating a second logical device. Optional subsystems such as the
 	// voxel module must fall back to their CPU implementation instead.
-	driver_workarounds.disable_local_devices = is_quest_3_adreno_740;
+	// OpenXR owns the Vulkan instance/device path for XR rendering. Keep local
+	// devices available in that mode because the XR graphics hook is not a
+	// secondary device; it is the device used by the OpenXR session itself.
+	driver_workarounds.disable_local_devices = is_quest_3_adreno_740 && VulkanHooks::get_singleton() == nullptr;
 
 	// Workaround for a bug in NVIDIA drivers where submitting a render pass with no bound pipeline and an attachment using the "Don't Care" store operation causes a crash.
 	driver_workarounds.avoid_store_op_dont_care_in_draw_list_with_no_bound_pipeline = (p_device_properties.vendorID == RenderingContextDriver::Vendor::VENDOR_NVIDIA);

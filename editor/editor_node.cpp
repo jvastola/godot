@@ -1011,6 +1011,14 @@ void EditorNode::_notification(int p_what) {
 		} break;
 
 		case NOTIFICATION_EXIT_TREE: {
+			if (embedded_reparent) {
+				// The embedded editor is reparenting EditorNode into its game window
+				// at startup. Only keep the viewport wiring balanced here; all the
+				// shutdown-only cleanup below must wait for the real exit.
+				get_viewport()->disconnect("size_changed", callable_mp(this, &EditorNode::_viewport_resized));
+				break;
+			}
+
 			singleton->active_plugins.clear();
 
 			if (progress_dialog) {
@@ -6656,6 +6664,14 @@ bool EditorNode::immediate_confirmation_dialog(const String &p_text, const Strin
 bool EditorNode::is_cmdline_mode() {
 	ERR_FAIL_NULL_V(singleton, false);
 	return singleton->cmdline_mode;
+}
+
+void EditorNode::begin_embedded_reparent() {
+	embedded_reparent = true;
+}
+
+void EditorNode::end_embedded_reparent() {
+	embedded_reparent = false;
 }
 
 void EditorNode::cleanup() {

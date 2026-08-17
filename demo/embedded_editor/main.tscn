@@ -1,0 +1,21 @@
+[gd_scene format=3 uid="uid://bt14grj20wkxv"]
+
+[ext_resource type="Script" uid="uid://c4b5ucskirbq1" path="res://main.gd" id="1_main"]
+
+[sub_resource type="BoxMesh" id="MeshCube"]
+
+[node name="Main" type="Node3D" unique_id=22422385]
+script = ExtResource("1_main")
+
+[node name="Camera3D" type="Camera3D" parent="." unique_id=46757405]
+transform = Transform3D(1, 0, 0, 0, 0.936, -0.351, 0, 0.351, 0.936, 0, 1.5, 4)
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=1783629101]
+transform = Transform3D(0.70711, 0, 0.70711, 0, 1, 0, -0.70711, 0, 0.70711, 0, 0, 0)
+
+[node name="Cube" type="MeshInstance3D" parent="." unique_id=1879470062]
+transform = Transform3D(0.866, 0, -0.5, 0, 1, 0, 0.5, 0, 0.866, 0, 0, 0)
+mesh = SubResource("MeshCube")
+
+[node name="EmbeddedEditorScreen" type="EmbeddedEditorScreen" parent="." unique_id=559563263]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.016090631, 3.425665, 0)

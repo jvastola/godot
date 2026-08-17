@@ -65,7 +65,9 @@
 #include "main/performance.h"
 #include "main/splash.gen.h"
 #include "scene/main/scene_tree.h"
+#include "scene/3d/camera_3d.h"
 #include "scene/main/window.h"
+#include "editor/embedded_editor_screen.h"
 #include "scene/property_list_helper.h"
 #include "scene/register_scene_types.h"
 #include "scene/resources/packed_scene.h"
@@ -222,6 +224,7 @@ static bool auto_build_solutions = false;
 static String debug_server_uri;
 static bool wait_for_import = false;
 static bool restore_editor_window_layout = true;
+static String embedded_editor_scene;
 #ifndef DISABLE_DEPRECATED
 static int converter_max_kb_file = 4 * 1024; // 4MB
 static int converter_max_line_length = 100000;
@@ -501,6 +504,7 @@ void Main::print_help(const char *p_binary) {
 #ifdef TOOLS_ENABLED
 	print_help_option("-e, --editor", "Start the editor instead of running the scene.\n", CLI_OPTION_AVAILABILITY_EDITOR);
 	print_help_option("-p, --project-manager", "Start the project manager, even if a project is auto-detected.\n", CLI_OPTION_AVAILABILITY_EDITOR);
+	print_help_option("--embed-editor <scene>", "When combined with --editor, runs <scene> inside the editor process so the game can embed the live editor GUI.\n", CLI_OPTION_AVAILABILITY_EDITOR);
 	print_help_option("--recovery-mode", "Start the editor in recovery mode, which disables features that can typically cause startup crashes, such as tool scripts, editor plugins, GDExtension addons, and others.\n", CLI_OPTION_AVAILABILITY_EDITOR);
 	print_help_option("--debug-server <uri>", "Start the editor debug server (<protocol>://<host/IP>[:port], e.g. tcp://127.0.0.1:6007)\n", CLI_OPTION_AVAILABILITY_EDITOR);
 	print_help_option("--dap-port <port>", "Use the specified port for the GDScript Debug Adapter Protocol. Recommended port range [1024, 49151].\n", CLI_OPTION_AVAILABILITY_EDITOR);
@@ -1527,6 +1531,14 @@ Error Main::setup(const char *execpath, int argc, char *argv[], bool p_second_ph
 			editor = true;
 		} else if (arg == "-p" || arg == "--project-manager") { // starts project manager
 			project_manager = true;
+		} else if (arg == "--embed-editor") { // Runs a scene in the editor process so it can embed the live editor GUI.
+			if (N) {
+				embedded_editor_scene = N->get();
+				N = N->next();
+			} else {
+				OS::get_singleton()->print("Missing scene path argument for --embed-editor, aborting.\n");
+				goto error;
+			}
 		} else if (arg == "--recovery-mode") { // Enables recovery mode.
 			recovery_mode = true;
 		} else if (arg == "--debug-server") {
@@ -4512,6 +4524,65 @@ int Main::start() {
 			}
 
 			OS::get_singleton()->benchmark_end_measure("Startup", "Editor");
+		}
+
+		if (editor && !embedded_editor_scene.is_empty()) {
+			// Embedded editor: the scene passed to --embed-editor IS the game. It is
+			// opened as the editor's edited scene, and the whole editor (EditorNode)
+			// is moved into a dedicated window, docked as a 2D panel on the right. A
+			// camera in that same window renders the shared World3D, so the live game
+			// is visible in the strip left of the editor panel. Because the editor
+			// edits the very scene the game shows, every edit is reflected immediately.
+			//
+			// Shutdown safety: we move the WHOLE EditorNode subtree (not just its
+			// gui_base). Teardown frees the editor's children in the same relative
+			// order as a normal editor, because some editor objects are owned both by
+			// the plugin system and parented into the GUI (e.g. the Version Control
+			// plugin's PopupMenu). Moving only gui_base flipped that order and caused
+			// a double-free crash at exit.
+			EditorNode *ed = EditorNode::get_singleton();
+			Node *edited = ed->get_editor_data().get_edited_scene_root();
+			String edited_path = edited ? edited->get_scene_file_path() : String();
+			if (edited_path != embedded_editor_scene) {
+				ed->load_scene(embedded_editor_scene);
+			}
+			// Re-fetch after load_scene — the root may have changed.
+			edited = ed->get_editor_data().get_edited_scene_root();
+
+			Window *root_win = Object::cast_to<Window>(sml->get_root());
+			if (root_win) {
+				root_win->set_position(Vector2i(1600, 0));
+			}
+
+			Window *game_window = memnew(Window);
+			game_window->set_name("EmbeddedGameWindow");
+			game_window->set_title("Embedded Editor");
+			game_window->set_size(Size2i(1600, 900));
+			game_window->set_position(Vector2i(0, 0));
+			sml->get_root()->add_child(game_window);
+
+			// The game: a camera rendering the editor's shared world (same live scene)
+			// in the strip left of the editor panel. Aim past the scene's center to the
+			// right so the cube lands inside the left strip instead of under the panel.
+			Camera3D *game_cam = memnew(Camera3D);
+			game_cam->set_name("EmbeddedGameCamera");
+			// Exclude the editor gizmo/grid layers (24-27) so only the scene renders.
+			game_cam->set_cull_mask((1 << 20) - 1);
+			game_window->add_child(game_cam);
+			game_cam->look_at_from_position(Vector3(0, 1.5, 4), Vector3(0, 3, 0), Vector3(0, 1, 0));
+			game_cam->make_current();
+
+			// --- In-scene editor screen: a flat quad in the3D scene showing the
+			// full editor UI.  The texture comes from the root viewport (which holds
+			// the editor), a different viewport than the one the game camera writes to.
+			Node *scene_root = edited;
+			if (scene_root) {
+				EmbeddedEditorScreen *screen = memnew(EmbeddedEditorScreen);
+				screen->set_name("EmbeddedEditorScreen");
+				screen->set_position(Vector3(0, 3.0, 0));
+				scene_root->add_child(screen);
+				screen->set_owner(scene_root);
+			}
 		}
 #endif
 		sml->set_auto_accept_quit(GLOBAL_GET("application/config/auto_accept_quit"));

@@ -35,6 +35,7 @@
 
 class CheckBox;
 class CheckButton;
+class EditorContext;
 class EditorSelection;
 class FilterLineEdit;
 class Label;
@@ -45,6 +46,7 @@ class SceneTreeEditor : public Control {
 	GDCLASS(SceneTreeEditor, Control);
 
 	EditorSelection *editor_selection = nullptr;
+	EditorContext *editor_context = nullptr;
 
 	enum SceneTreeEditorButton {
 		BUTTON_SUBSCENE = 0,
@@ -249,6 +251,9 @@ public:
 	void set_as_scene_tree_dock();
 	void set_display_foreign_nodes(bool p_display);
 
+	void set_editor_context(EditorContext *p_context);
+	EditorContext *get_context() const;
+
 	void set_marked(const HashSet<Node *> &p_marked, bool p_selectable = true, bool p_children_selectable = true);
 	void set_marked(Node *p_marked, bool p_selectable = true, bool p_children_selectable = true);
 	void set_selected(Node *p_node, bool p_emit_selected = true);
@@ -286,6 +291,7 @@ class SceneTreeDialog : public ConfirmationDialog {
 	CheckButton *show_all_nodes = nullptr;
 	LocalVector<TextureRect *> valid_type_icons;
 	HBoxContainer *allowed_types_hbox = nullptr;
+	EditorContext *editor_context = nullptr;
 
 	void _select();
 	void _cancel();
@@ -301,6 +307,9 @@ protected:
 public:
 	void popup_scenetree_dialog(Node *p_selected_node = nullptr, Node *p_marked_node = nullptr, bool p_marked_node_selectable = true, bool p_marked_node_children_selectable = true);
 	void set_valid_types(const Vector<StringName> &p_valid);
+
+	void set_editor_context(EditorContext *p_context);
+	EditorContext *get_context() const;
 
 	SceneTreeEditor *get_scene_tree() { return tree; }
 	LineEdit *get_filter_line_edit();

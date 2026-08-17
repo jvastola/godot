@@ -40,6 +40,7 @@
 #include "editor/docks/editor_dock_manager.h"
 #include "editor/docks/groups_dock.h"
 #include "editor/docks/signals_dock.h"
+#include "editor/editor_context.h"
 #include "editor/editor_node.h"
 #include "editor/editor_string_names.h"
 #include "editor/editor_undo_redo_manager.h"
@@ -64,6 +65,14 @@ Node *SceneTreeEditor::get_scene_node() const {
 	ERR_FAIL_COND_V(!is_inside_tree(), nullptr);
 
 	return get_tree()->get_edited_scene_root();
+}
+
+void SceneTreeEditor::set_editor_context(EditorContext *p_context) {
+	editor_context = p_context;
+}
+
+EditorContext *SceneTreeEditor::get_context() const {
+	return editor_context ? editor_context : EditorContextEditorBridge::get_singleton();
 }
 
 PackedStringArray SceneTreeEditor::_get_node_configuration_warnings(Node *p_node) {
@@ -382,6 +391,13 @@ void SceneTreeEditor::_update_node_subtree(Node *p_node, TreeItem *p_parent, boo
 		return;
 	}
 
+	// Skip nodes that are not inside the tree yet (e.g. siblings that enter after
+	// us during scene setup). Their path cannot be computed, which would leave the
+	// TreeItem with an empty NodePath and break later get_node() lookups.
+	if (!p_node->is_inside_tree()) {
+		return;
+	}
+
 	// Only owned nodes are editable, since nodes can create their own (manually owned) child nodes,
 	// which the editor needs not to know about.
 
@@ -441,7 +457,7 @@ void SceneTreeEditor::_update_node_subtree(Node *p_node, TreeItem *p_parent, boo
 		is_new = true;
 	}
 
-	EditorNode::get_singleton()->update_resource_count(p_node);
+	get_context()->update_resource_count(p_node);
 
 	if (!(p_force || I->value.dirty)) {
 		// Nothing to do.
@@ -463,7 +479,7 @@ void SceneTreeEditor::_update_node_subtree(Node *p_node, TreeItem *p_parent, boo
 		bool valid = false;
 		for (const StringName &E : valid_types) {
 			if (p_node->is_class(E) ||
-					EditorNode::get_singleton()->is_object_of_custom_type(p_node, E)) {
+					get_context()->is_object_of_custom_type(p_node, E)) {
 				valid = true;
 				break;
 			} else {
@@ -512,7 +528,7 @@ void SceneTreeEditor::_update_node(Node *p_node, TreeItem *p_item, bool p_part_o
 		}
 	}
 
-	Ref<Texture2D> icon = EditorNode::get_singleton()->get_object_icon(p_node);
+	Ref<Texture2D> icon = get_context()->get_object_icon(p_node);
 	p_item->set_icon(0, icon);
 	p_item->set_metadata(0, p_node->get_path());
 
@@ -535,7 +551,7 @@ void SceneTreeEditor::_update_node(Node *p_node, TreeItem *p_item, bool p_part_o
 		Ref<Script> scr = p_node->get_script();
 		if (scr.is_valid()) {
 			p_item->add_button(0, get_editor_theme_icon(SNAME("Script")), BUTTON_SCRIPT);
-			if (EditorNode::get_singleton()->get_object_custom_type_base(p_node) == scr) {
+			if (get_context()->get_object_custom_type_base(p_node) == scr) {
 				// Disable button on custom scripts (pure visual cue).
 				p_item->set_button_disabled(0, p_item->get_button_count(0) - 1, true);
 			}
@@ -546,7 +562,7 @@ void SceneTreeEditor::_update_node(Node *p_node, TreeItem *p_item, bool p_part_o
 		Color accent = get_theme_color(SNAME("accent_color"), EditorStringName(Editor));
 
 		Ref<Script> scr = p_node->get_script();
-		bool has_custom_script = scr.is_valid() && EditorNode::get_singleton()->get_object_custom_type_base(p_node) == scr;
+		bool has_custom_script = scr.is_valid() && get_context()->get_object_custom_type_base(p_node) == scr;
 		if (scr.is_null() || has_custom_script) {
 			_set_item_custom_color(p_item, get_theme_color(SNAME("font_disabled_color"), EditorStringName(Editor)));
 			p_item->set_selectable(0, false);
@@ -619,7 +635,7 @@ void SceneTreeEditor::_update_node(Node *p_node, TreeItem *p_item, bool p_part_o
 		}
 
 		if (p_node->is_unique_name_in_owner()) {
-			const bool disabled = p_node->get_owner() != EditorNode::get_singleton()->get_edited_scene();
+			const bool disabled = p_node->get_owner() != get_context()->get_edited_scene();
 			String button_text = vformat(TTR("This node can be accessed from anywhere within the scene it belongs to by using the '%s' prefix in the node path."), UNIQUE_NODE_PREFIX);
 			if (!disabled) {
 				button_text += "\n" + TTR("Click to disable this.");
@@ -697,7 +713,7 @@ void SceneTreeEditor::_update_node(Node *p_node, TreeItem *p_item, bool p_part_o
 					button_color = get_theme_color(SNAME("accent_color"), EditorStringName(Editor));
 				}
 			}
-			if (EditorNode::get_singleton()->get_object_custom_type_base(p_node) == scr) {
+			if (get_context()->get_object_custom_type_base(p_node) == scr) {
 				additional_notes += "\n" + TTR("This script is a custom type.");
 				button_color.a = 0.5;
 			}
@@ -727,10 +743,12 @@ void SceneTreeEditor::_update_node(Node *p_node, TreeItem *p_item, bool p_part_o
 		}
 
 		if (p_node->is_class("AnimationMixer")) {
-			bool is_pinned = AnimationPlayerEditor::get_singleton()->get_editing_node() == p_node && AnimationPlayerEditor::get_singleton()->is_pinned();
+			if (AnimationPlayerEditor::get_singleton()) {
+				bool is_pinned = AnimationPlayerEditor::get_singleton()->get_editing_node() == p_node && AnimationPlayerEditor::get_singleton()->is_pinned();
 
-			if (is_pinned) {
-				p_item->add_button(0, get_editor_theme_icon(SNAME("Pin")), BUTTON_PIN, false, TTR("AnimationPlayer is pinned.\nClick to unpin."));
+				if (is_pinned) {
+					p_item->add_button(0, get_editor_theme_icon(SNAME("Pin")), BUTTON_PIN, false, TTR("AnimationPlayer is pinned.\nClick to unpin."));
+				}
 			}
 		}
 	}
@@ -786,7 +804,7 @@ void SceneTreeEditor::_update_node_tooltip(Node *p_node, TreeItem *p_item) {
 		tooltip += String("\n" + TTR("Instance:") + " " + p_node->get_scene_file_path());
 	}
 
-	StringName custom_type = EditorNode::get_singleton()->get_object_custom_type_name(p_node);
+	StringName custom_type = get_context()->get_object_custom_type_name(p_node);
 	tooltip += "\n" + TTR("Type:") + " " + (custom_type != StringName() ? String(custom_type) : p_node->get_class());
 
 	if (!p_node->get_editor_description().is_empty()) {
@@ -991,11 +1009,11 @@ void SceneTreeEditor::_node_added(Node *p_node) {
 }
 
 void SceneTreeEditor::_node_removed(Node *p_node) {
-	if (EditorNode::get_singleton()->is_exiting()) {
+	if (get_context()->is_exiting()) {
 		return; // Speed up exit.
 	}
 
-	if (EditorNode::get_singleton()->is_changing_scene()) {
+	if (get_context()->is_changing_scene()) {
 		return; // Switching tabs we will be destroying node cache anyway.
 	}
 
@@ -1057,24 +1075,26 @@ void SceneTreeEditor::_update_tree(bool p_scroll_to_selected) {
 
 	if (node_cache.current_scene_id.is_valid()) {
 		// Handle pinning/unpinning the animation player only do this once per iteration.
-		Node *pinned_node = AnimationPlayerEditor::get_singleton()->get_editing_node();
-		// If pinned state changed, update the currently pinned node.
-		if (AnimationPlayerEditor::get_singleton()->is_pinned() != node_cache.current_has_pin) {
-			node_cache.current_has_pin = AnimationPlayerEditor::get_singleton()->is_pinned();
-			if (node_cache.has(pinned_node)) {
-				node_cache.mark_dirty(pinned_node);
+		if (AnimationPlayerEditor::get_singleton()) {
+			Node *pinned_node = AnimationPlayerEditor::get_singleton()->get_editing_node();
+			// If pinned state changed, update the currently pinned node.
+			if (AnimationPlayerEditor::get_singleton()->is_pinned() != node_cache.current_has_pin) {
+				node_cache.current_has_pin = AnimationPlayerEditor::get_singleton()->is_pinned();
+				if (node_cache.has(pinned_node)) {
+					node_cache.mark_dirty(pinned_node);
+				}
 			}
-		}
-		// If the current pinned node changed update both the old and new node.
-		if (node_cache.current_pinned_node != pinned_node) {
-			// get_editing_node() will return deleted nodes. If the nodes are not in cache don't try to mark them.
-			if (node_cache.has(pinned_node)) {
-				node_cache.mark_dirty(pinned_node);
+			// If the current pinned node changed update both the old and new node.
+			if (node_cache.current_pinned_node != pinned_node) {
+				// get_editing_node() will return deleted nodes. If the nodes are not in cache don't try to mark them.
+				if (node_cache.has(pinned_node)) {
+					node_cache.mark_dirty(pinned_node);
+				}
+				if (node_cache.has(node_cache.current_pinned_node)) {
+					node_cache.mark_dirty(node_cache.current_pinned_node);
+				}
+				node_cache.current_pinned_node = pinned_node;
 			}
-			if (node_cache.has(node_cache.current_pinned_node)) {
-				node_cache.mark_dirty(node_cache.current_pinned_node);
-			}
-			node_cache.current_pinned_node = pinned_node;
 		}
 		_update_node_subtree(get_scene_node(), nullptr, node_cache.force_update);
 		_compute_hash(get_scene_node(), last_hash);
@@ -1134,7 +1154,7 @@ bool SceneTreeEditor::_update_filter_helper(TreeItem *p_parent, bool p_scroll_to
 			selectable = false;
 			for (const StringName &E : valid_types) {
 				if (n->is_class(E) ||
-						EditorNode::get_singleton()->is_object_of_custom_type(n, E)) {
+						get_context()->is_object_of_custom_type(n, E)) {
 					selectable = true;
 					break;
 				} else {
@@ -1378,7 +1398,7 @@ void SceneTreeEditor::_tree_process_mode_changed() {
 }
 
 void SceneTreeEditor::_tree_changed() {
-	if (EditorNode::get_singleton()->is_exiting()) {
+	if (get_context()->is_exiting()) {
 		return; // Speed up exit.
 	}
 
@@ -2193,6 +2213,11 @@ void SceneTreeEditor::update_warning() {
 void SceneTreeEditor::_warning_changed(Node *p_for_node) {
 	node_cache.mark_dirty(p_for_node);
 
+	if (!update_timer->is_inside_tree()) {
+		// Still inside NOTIFICATION_ENTER_TREE: children (including update_timer) enter
+		// after the parent's notification, and _update_tree() will run at the end of it.
+		return;
+	}
 	// Should use a timer.
 	update_timer->start();
 }
@@ -2393,14 +2418,14 @@ void SceneTreeDialog::set_valid_types(const Vector<StringName> &p_valid) {
 
 		// Attempt to get the correct name and icon for script path types.
 		String name = type;
-		Ref<Texture2D> icon = EditorNode::get_singleton()->get_class_icon(type);
+		Ref<Texture2D> icon = get_context()->get_class_icon(type);
 
 		// If we can't find a global class icon, try to find one for the script.
 		if (icon.is_null() && ResourceLoader::exists(type, "Script")) {
 			Ref<Script> node_script = ResourceLoader::load(type);
 			if (node_script.is_valid()) {
 				name = name.get_file();
-				icon = EditorNode::get_singleton()->get_object_icon(node_script.ptr());
+				icon = get_context()->get_object_icon(node_script.ptr());
 			}
 		}
 
@@ -2504,6 +2529,7 @@ SceneTreeDialog::SceneTreeDialog() {
 
 	filter_hbc->add_child(filter);
 
+
 	// Add 'Show All' button to HBoxContainer next to the filter, visible only when valid_types is defined.
 	show_all_nodes = memnew(CheckButton);
 	show_all_nodes->set_text(TTRC("Show All"));
@@ -2518,6 +2544,7 @@ SceneTreeDialog::SceneTreeDialog() {
 	content->add_child(mc);
 
 	tree = memnew(SceneTreeEditor(false, false, true));
+	tree->set_editor_context(editor_context);
 	filter->set_forward_control(tree->get_scene_tree());
 	tree->set_update_when_invisible(false);
 	tree->get_scene_tree()->set_scroll_hint_mode(Tree::SCROLL_HINT_MODE_BOTH);
@@ -2530,6 +2557,15 @@ SceneTreeDialog::SceneTreeDialog() {
 	// Disable the OK button when no node is selected.
 	get_ok_button()->set_disabled(!tree->get_selected());
 	tree->connect("node_selected", callable_mp(this, &SceneTreeDialog::_selected_changed));
+}
+
+void SceneTreeDialog::set_editor_context(EditorContext *p_context) {
+	editor_context = p_context;
+	tree->set_editor_context(p_context);
+}
+
+EditorContext *SceneTreeDialog::get_context() const {
+	return editor_context ? editor_context : EditorContextEditorBridge::get_singleton();
 }
 
 /******** CACHE *********/
@@ -2591,7 +2627,7 @@ void SceneTreeEditor::NodeCache::remove(Node *p_node, bool p_recursive) {
 	HashMap<Node *, CachedNode>::Iterator I = cache.find(p_node);
 	if (I) {
 		if (editor->is_scene_tree_dock) {
-			EditorNode::get_singleton()->update_resource_count(I->key, true);
+			editor->get_context()->update_resource_count(I->key, true);
 		}
 		if (p_recursive) {
 			int cc = p_node->get_child_count(false);

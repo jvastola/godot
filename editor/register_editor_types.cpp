@@ -46,6 +46,7 @@
 #include "editor/editor_node.h"
 #include "editor/editor_string_names.h"
 #include "editor/editor_undo_redo_manager.h"
+#include "editor/embedded_editor_screen.h"
 #include "editor/export/editor_export_platform.h"
 #include "editor/export/editor_export_platform_apple_embedded.h"
 #include "editor/export/editor_export_platform_extension.h"
@@ -178,6 +179,7 @@ void register_editor_types() {
 	GDREGISTER_ABSTRACT_CLASS(EditorExportPlatformAppleEmbedded);
 	GDREGISTER_CLASS(EditorExportPlatformExtension);
 	GDREGISTER_ABSTRACT_CLASS(EditorExportPreset);
+	GDREGISTER_CLASS(EmbeddedEditorScreen);
 
 	register_exporter_types();
 

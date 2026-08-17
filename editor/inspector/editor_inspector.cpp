@@ -40,6 +40,7 @@
 #include "editor/debugger/editor_debugger_node.h"
 #include "editor/doc/doc_tools.h"
 #include "editor/docks/inspector_dock.h"
+#include "editor/editor_context.h"
 #include "editor/editor_interface.h"
 #include "editor/editor_main_screen.h"
 #include "editor/editor_node.h"
@@ -831,9 +832,14 @@ Variant EditorProperty::get_edited_property_display_value() const {
 	if (!control) {
 		MultiNodeEdit *multi = Object::cast_to<MultiNodeEdit>(object);
 		if (multi) {
-			Node *root = EditorNode::get_singleton()->get_edited_scene();
+			Node *root = nullptr;
+			if (get_parent_inspector()) {
+				root = get_parent_inspector()->get_context()->get_edited_scene();
+			}
 			NodePath np = multi->get_node(0);
-			control = Object::cast_to<Control>(root->get_node_or_null(np));
+			if (root) {
+				control = Object::cast_to<Control>(root->get_node_or_null(np));
+			}
 		}
 	}
 
@@ -1480,7 +1486,7 @@ static bool _is_value_potential_override(Node *p_node, const String &p_property)
 	// Consider a value is potentially overriding another if either of the following is true:
 	// a) The node is foreign (inheriting or an instance), so the original value may come from another scene.
 	// b) The node belongs to the scene, but the original value comes from somewhere but the builtin class (i.e., a script).
-	Node *edited_scene = EditorNode::get_singleton()->get_edited_scene();
+	Node *edited_scene = EditorContextEditorBridge::get_singleton()->get_edited_scene();
 	Vector<SceneState::PackState> states_stack = PropertyUtils::get_node_states_stack(p_node, edited_scene);
 	if (states_stack.size()) {
 		return true;
@@ -1504,10 +1510,13 @@ void EditorProperty::_update_flags() {
 		// Avoid errors down the road by ignoring nodes which are not part of a scene
 		if (!node->get_owner()) {
 			bool is_scene_root = false;
-			for (int i = 0; i < EditorNode::get_editor_data().get_edited_scene_count(); ++i) {
-				if (EditorNode::get_editor_data().get_edited_scene_root(i) == node) {
-					is_scene_root = true;
-					break;
+			if (get_parent_inspector()) {
+				EditorData &ed = get_parent_inspector()->get_context()->get_editor_data();
+				for (int i = 0; i < ed.get_edited_scene_count(); ++i) {
+					if (ed.get_edited_scene_root(i) == node) {
+						is_scene_root = true;
+						break;
+					}
 				}
 			}
 			if (!is_scene_root) {
@@ -1608,8 +1617,13 @@ void EditorProperty::menu_option(int p_option) {
 			update_property();
 		} break;
 		case MENU_OPEN_DOCUMENTATION: {
-			ScriptEditor::get_singleton()->goto_help(doc_path);
-			EditorNode::get_singleton()->get_editor_main_screen()->select(EditorMainScreen::EDITOR_SCRIPT);
+			if (ScriptEditor::get_singleton()) {
+				ScriptEditor::get_singleton()->goto_help(doc_path);
+			}
+			EditorContext *context = get_parent_inspector() ? get_parent_inspector()->get_context() : nullptr;
+			if (context && context->get_editor_main_screen()) {
+				context->get_editor_main_screen()->select(EditorMainScreen::EDITOR_SCRIPT);
+			}
 		} break;
 		default: {
 			if (p_option >= EditorContextMenuPlugin::BASE_ID) {
@@ -1778,7 +1792,7 @@ void EditorProperty::_update_popup() {
 			menu->add_icon_item(theme_cache.revert_icon, TTR("Revert Value"), MENU_REVERT_VALUE);
 		}
 	}
-	if (!doc_path.is_empty() && ScriptEditor::get_singleton() && EditorNode::get_singleton()) {
+	if (!doc_path.is_empty() && ScriptEditor::get_singleton() && EditorContextEditorBridge::get_singleton()->get_editor_main_screen()) {
 		menu->add_separator();
 		menu->add_icon_item(theme_cache.help_icon, TTR("Open Documentation"), MENU_OPEN_DOCUMENTATION);
 	}
@@ -1860,7 +1874,7 @@ void EditorInspectorPlugin::_bind_methods() {
 ////////////////////////////////////////////////
 
 static Ref<Script> _get_category_script(const PropertyInfo &p_info) {
-	if (!p_info.hint_string.is_empty() && !EditorNode::get_editor_data().is_type_recognized(p_info.name) && ResourceLoader::exists(p_info.hint_string, "Script")) {
+	if (!p_info.hint_string.is_empty() && !EditorContextEditorBridge::get_singleton()->get_editor_data().is_type_recognized(p_info.name) && ResourceLoader::exists(p_info.hint_string, "Script")) {
 		return ResourceLoader::load(p_info.hint_string, "Script");
 	}
 	return Ref<Script>();
@@ -1996,7 +2010,7 @@ void EditorInspectorCategory::set_property_info(const PropertyInfo &p_info) {
 
 	Ref<Script> scr = _get_category_script(info);
 	if (scr.is_valid()) {
-		StringName script_name = EditorNode::get_editor_data().script_class_get_name(scr->get_path());
+		StringName script_name = EditorContextEditorBridge::get_singleton()->get_editor_data().script_class_get_name(scr->get_path());
 		if (script_name != StringName()) {
 			label = script_name;
 		}
@@ -2076,8 +2090,12 @@ void EditorInspectorCategory::_handle_menu_option(int p_option) {
 		} break;
 
 		case MENU_OPEN_DOCS: {
-			ScriptEditor::get_singleton()->goto_help("class:" + doc_class_name);
-			EditorNode::get_singleton()->get_editor_main_screen()->select(EditorMainScreen::EDITOR_SCRIPT);
+			if (ScriptEditor::get_singleton()) {
+				ScriptEditor::get_singleton()->goto_help("class:" + doc_class_name);
+			}
+			if (EditorContextEditorBridge::get_singleton()->get_editor_main_screen()) {
+				EditorContextEditorBridge::get_singleton()->get_editor_main_screen()->select(EditorMainScreen::EDITOR_SCRIPT);
+			}
 		} break;
 
 		case MENU_UNFAVORITE_ALL: {
@@ -2134,15 +2152,16 @@ void EditorInspectorCategory::_update_icon() {
 
 	Ref<Script> scr = _get_category_script(info);
 	if (scr.is_valid()) {
-		StringName script_name = EditorNode::get_editor_data().script_class_get_name(scr->get_path());
+		EditorContextEditorBridge *bridge = EditorContextEditorBridge::get_singleton();
+		StringName script_name = bridge->get_editor_data().script_class_get_name(scr->get_path());
 		if (script_name == StringName()) {
-			icon = EditorNode::get_singleton()->get_object_icon(scr.ptr());
+			icon = bridge->get_object_icon(scr.ptr());
 		} else {
-			icon = EditorNode::get_singleton()->get_class_icon(script_name);
+			icon = bridge->get_class_icon(script_name);
 		}
 	}
 	if (icon.is_null() && !info.name.is_empty()) {
-		icon = EditorNode::get_singleton()->get_class_icon(info.name);
+		icon = EditorContextEditorBridge::get_singleton()->get_class_icon(info.name);
 	}
 }
 
@@ -2882,7 +2901,7 @@ void EditorInspectorSection::_update_popup() {
 		menu->add_separator();
 		menu->add_icon_item(theme_cache.icon_gui_revert, TTRC("Revert Value"), MENU_REVERT_VALUE);
 	}
-	if (!doc_path.is_empty() && ScriptEditor::get_singleton() && EditorNode::get_singleton()) {
+	if (!doc_path.is_empty() && ScriptEditor::get_singleton() && EditorContextEditorBridge::get_singleton()->get_editor_main_screen()) {
 		menu->add_separator();
 		menu->add_icon_item(theme_cache.help_icon, TTRC("Open Documentation"), MENU_OPEN_DOCUMENTATION);
 	}
@@ -2955,8 +2974,13 @@ void EditorInspectorSection::menu_option(int p_option) {
 		} break;
 
 		case MENU_OPEN_DOCUMENTATION: {
-			ScriptEditor::get_singleton()->goto_help(doc_path);
-			EditorNode::get_singleton()->get_editor_main_screen()->select(EditorMainScreen::EDITOR_SCRIPT);
+			if (ScriptEditor::get_singleton()) {
+				ScriptEditor::get_singleton()->goto_help(doc_path);
+			}
+			EditorContext *context = _get_parent_inspector() ? _get_parent_inspector()->get_context() : nullptr;
+			if (context && context->get_editor_main_screen()) {
+				context->get_editor_main_screen()->select(EditorMainScreen::EDITOR_SCRIPT);
+			}
 		} break;
 	}
 }
@@ -3157,7 +3181,7 @@ void EditorInspectorArray::_move_element(int p_element_index, int p_to_pos) {
 	undo_redo->create_action(action_name);
 	if (mode == MODE_USE_MOVE_ARRAY_ELEMENT_FUNCTION) {
 		// Call the function.
-		Callable move_function = EditorNode::get_editor_data().get_move_array_element_function(object->get_class_name());
+		Callable move_function = EditorContextEditorBridge::get_singleton()->get_editor_data().get_move_array_element_function(object->get_class_name());
 		if (move_function.is_valid()) {
 			move_function.call(undo_redo, object, array_element_prefix, p_element_index, p_to_pos);
 		} else {
@@ -3298,7 +3322,7 @@ void EditorInspectorArray::_clear_array() {
 	if (mode == MODE_USE_MOVE_ARRAY_ELEMENT_FUNCTION) {
 		for (int i = count - 1; i >= 0; i--) {
 			// Call the function.
-			Callable move_function = EditorNode::get_editor_data().get_move_array_element_function(object->get_class_name());
+			Callable move_function = EditorContextEditorBridge::get_singleton()->get_editor_data().get_move_array_element_function(object->get_class_name());
 			if (move_function.is_valid()) {
 				move_function.call(undo_redo, object, array_element_prefix, i, -1);
 			} else {
@@ -3346,7 +3370,7 @@ void EditorInspectorArray::_resize_array(int p_size) {
 		if (mode == MODE_USE_MOVE_ARRAY_ELEMENT_FUNCTION) {
 			for (int i = count; i < p_size; i++) {
 				// Call the function.
-				Callable move_function = EditorNode::get_editor_data().get_move_array_element_function(object->get_class_name());
+				Callable move_function = EditorContextEditorBridge::get_singleton()->get_editor_data().get_move_array_element_function(object->get_class_name());
 				if (move_function.is_valid()) {
 					move_function.call(undo_redo, object, array_element_prefix, -1, -1);
 				} else {
@@ -3361,7 +3385,7 @@ void EditorInspectorArray::_resize_array(int p_size) {
 		if (mode == MODE_USE_MOVE_ARRAY_ELEMENT_FUNCTION) {
 			for (int i = count - 1; i > p_size - 1; i--) {
 				// Call the function.
-				Callable move_function = EditorNode::get_editor_data().get_move_array_element_function(object->get_class_name());
+				Callable move_function = EditorContextEditorBridge::get_singleton()->get_editor_data().get_move_array_element_function(object->get_class_name());
 				if (move_function.is_valid()) {
 					move_function.call(undo_redo, object, array_element_prefix, i, -1);
 				} else {
@@ -4171,6 +4195,14 @@ bool EditorInspector::is_main_editor_inspector() const {
 	return InspectorDock::get_singleton() && InspectorDock::get_inspector_singleton() == this;
 }
 
+void EditorInspector::set_editor_context(EditorContext *p_context) {
+	editor_context = p_context;
+}
+
+EditorContext *EditorInspector::get_context() const {
+	return editor_context ? editor_context : EditorContextEditorBridge::get_singleton();
+}
+
 String EditorInspector::get_selected_path() const {
 	return property_selected;
 }
@@ -4557,7 +4589,7 @@ void EditorInspector::update_tree() {
 				doc_name = p.name;
 
 				// Use category's owner script to update some of its information.
-				if (!EditorNode::get_editor_data().is_type_recognized(p.name) && ResourceLoader::exists(p.hint_string, "Script")) {
+				if (!get_context()->get_editor_data().is_type_recognized(p.name) && ResourceLoader::exists(p.hint_string, "Script")) {
 					Ref<Script> scr = ResourceLoader::load(p.hint_string, "Script");
 					if (scr.is_valid()) {
 						doc_name = scr->get_doc_class_name();
@@ -5096,7 +5128,7 @@ void EditorInspector::update_tree() {
 
 		Vector<SceneState::PackState> sstack;
 		if (node != nullptr) {
-			const Node *es = EditorNode::get_singleton()->get_edited_scene();
+			const Node *es = get_context()->get_edited_scene();
 			sstack = PropertyUtils::get_node_states_stack(node, es);
 		}
 
@@ -5333,7 +5365,7 @@ void EditorInspector::update_tree() {
 
 	if (is_main_editor_inspector()) {
 		// Updating inspector might invalidate some editing owners.
-		EditorNode::get_singleton()->hide_unused_editors();
+		get_context()->hide_unused_editors();
 	}
 
 	if (root_inspector_was_following_focus) {
@@ -5391,7 +5423,7 @@ void EditorInspector::_clear(bool p_hide_plugins) {
 	restart_request_props.clear();
 
 	if (p_hide_plugins && is_main_editor_inspector()) {
-		EditorNode::get_singleton()->hide_unused_editors(this);
+		get_context()->hide_unused_editors(this);
 	}
 }
 
@@ -5700,7 +5732,7 @@ void EditorInspector::_edit_set(const String &p_name, const Variant &p_value, bo
 			}
 			Node *N = Object::cast_to<Node>(object);
 			bool double_counting = Object::cast_to<Node>(p_value) == N || Object::cast_to<Node>(value) == N;
-			if (N && !double_counting && (type == Variant::OBJECT || type == Variant::ARRAY || type == Variant::DICTIONARY) && value != p_value) {
+			if (N && !double_counting && (type == Variant::OBJECT || type == Variant::ARRAY || type == Variant::DICTIONARY) && value != p_value && EditorNode::get_singleton()) {
 				undo_redo->add_do_method(EditorNode::get_singleton(), "update_node_reference", value, N, true);
 				undo_redo->add_do_method(EditorNode::get_singleton(), "update_node_reference", p_value, N, false);
 				// Perhaps an inefficient way of updating the resource count.
@@ -5733,7 +5765,7 @@ void EditorInspector::_edit_set(const String &p_name, const Variant &p_value, bo
 		Variant v_undo_redo = undo_redo;
 		Variant v_object = object;
 		Variant v_name = p_name;
-		const Vector<Callable> &callbacks = EditorNode::get_editor_data().get_undo_redo_inspector_hook_callback();
+		const Vector<Callable> &callbacks = get_context()->get_editor_data().get_undo_redo_inspector_hook_callback();
 		for (int i = 0; i < callbacks.size(); i++) {
 			const Callable &callback = callbacks[i];
 
@@ -5757,7 +5789,7 @@ void EditorInspector::_edit_set(const String &p_name, const Variant &p_value, bo
 
 		Resource *r = Object::cast_to<Resource>(object);
 
-		if (r) {
+		if (r && EditorNode::get_singleton()) {
 			//Setting a Subresource. Since there's possibly multiple Nodes referencing 'r', we need to link them to the Subresource.
 			List<Node *> shared_nodes = EditorNode::get_singleton()->get_resource_node_list(r);
 			for (Node *N : shared_nodes) {

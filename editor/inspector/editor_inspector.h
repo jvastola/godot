@@ -38,6 +38,7 @@
 
 class AddMetadataDialog;
 class AcceptDialog;
+class EditorContext;
 class EditorInspector;
 class HSeparator;
 class LineEdit;
@@ -803,6 +804,7 @@ private:
 	void _clear(bool p_hide_plugins = true);
 	Object *object = nullptr;
 	Object *next_object = nullptr;
+	EditorContext *editor_context = nullptr;
 
 	//
 
@@ -988,6 +990,9 @@ public:
 	void set_root_inspector(EditorInspector *p_root_inspector);
 	EditorInspector *get_root_inspector() { return is_sub_inspector() ? root_inspector : this; }
 	bool is_sub_inspector() const { return root_inspector != nullptr; }
+
+	void set_editor_context(EditorContext *p_context);
+	EditorContext *get_context() const;
 
 	void set_use_deletable_properties(bool p_enabled);
 

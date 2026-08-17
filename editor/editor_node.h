@@ -258,6 +258,12 @@ private:
 
 	static EditorNode *singleton;
 
+	// When the embedded editor reparents EditorNode into its game window at
+	// startup, NOTIFICATION_EXIT_TREE fires once. That would run shutdown-only
+	// cleanup (clearing edited scenes, deinit the log, etc.), so this flag
+	// suppresses it for that single reparent. Real shutdown still runs normally.
+	bool embedded_reparent = false;
+
 	EditorData editor_data;
 	EditorFolding editor_folding;
 	EditorSelectionHistory editor_history;
@@ -749,7 +755,15 @@ public:
 	static EditorNode *get_singleton() { return singleton; }
 
 	static EditorLog *get_log() { return singleton->log; }
-	static EditorData &get_editor_data() { return singleton->editor_data; }
+	static EditorData &get_editor_data() {
+		// Runtime (embedded editor): EditorNode has no singleton, return an empty
+		// EditorData so editor widgets (e.g. CreateDialog) don't dereference null.
+		if (singleton == nullptr) {
+			static EditorData fallback;
+			return fallback;
+		}
+		return singleton->editor_data;
+	}
 	static EditorFolding &get_editor_folding() { return singleton->editor_folding; }
 
 	static EditorTitleBar *get_title_bar() { return singleton->title_bar; }
@@ -979,6 +993,12 @@ public:
 	bool is_project_exporting() const;
 
 	Control *get_gui_base() { return gui_base; }
+
+	// Embedded editor support: wrap the reparent of EditorNode into the game
+	// window. The guard suppresses the shutdown-only cleanup that
+	// NOTIFICATION_EXIT_TREE would otherwise run on that one startup reparent.
+	void begin_embedded_reparent();
+	void end_embedded_reparent();
 
 	void save_scene_to_path(String p_file, bool p_with_preview = true) {
 		if (p_with_preview) {
