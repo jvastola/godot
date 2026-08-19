@@ -33,6 +33,7 @@
 #include "thread_jandroid.h"
 
 #include "core/string/print_string.h"
+#include "drivers/unix/file_access_unix.h"
 
 #include <android/asset_manager_jni.h>
 
@@ -59,19 +60,34 @@ Error FileAccessAndroid::open_internal(const String &p_path, int p_mode_flags) {
 		path = path.substr(6);
 	}
 
-	ERR_FAIL_COND_V(p_mode_flags & FileAccess::WRITE, ERR_UNAVAILABLE); //can't write on android..
-	asset = AAssetManager_open(asset_manager, path.utf8().get_data(), AASSET_MODE_STREAMING);
-	if (!asset) {
-		return ERR_CANT_OPEN;
+	// Writes and .godot/ editor caches should go to real filesystem, not APK assets.
+	// Try APK assets first for reads; fallback to unix filesystem.
+	if (p_mode_flags & FileAccess::WRITE) {
+		// Delegate writes to unix filesystem (e.g. res://.godot/, user writable paths).
+		return unix_file.open_internal(p_path, p_mode_flags);
 	}
-	len = AAsset_getLength(asset);
-	pos = 0;
-	eof = false;
-
-	return OK;
+	asset = AAssetManager_open(asset_manager, path.utf8().get_data(), AASSET_MODE_STREAMING);
+	if (asset) {
+		len = AAsset_getLength(asset);
+		pos = 0;
+		eof = false;
+		return OK;
+	}
+	// Not in APK assets - try real filesystem (for .godot caches, writable res:// paths).
+	Error err = unix_file.open_internal(p_path, p_mode_flags);
+	if (err == OK) {
+		using_unix_fallback = true;
+		return OK;
+	}
+	return ERR_CANT_OPEN;
 }
 
 void FileAccessAndroid::_close() {
+	if (using_unix_fallback) {
+		unix_file.close();
+		using_unix_fallback = false;
+		return;
+	}
 	if (!asset) {
 		return;
 	}
@@ -80,10 +96,17 @@ void FileAccessAndroid::_close() {
 }
 
 bool FileAccessAndroid::is_open() const {
+	if (using_unix_fallback) {
+		return unix_file.is_open();
+	}
 	return asset != nullptr;
 }
 
 void FileAccessAndroid::seek(uint64_t p_position) {
+	if (using_unix_fallback) {
+		unix_file.seek(p_position);
+		return;
+	}
 	ERR_FAIL_NULL(asset);
 
 	AAsset_seek(asset, p_position, SEEK_SET);
@@ -97,24 +120,40 @@ void FileAccessAndroid::seek(uint64_t p_position) {
 }
 
 void FileAccessAndroid::seek_end(int64_t p_position) {
+	if (using_unix_fallback) {
+		unix_file.seek_end(p_position);
+		return;
+	}
 	ERR_FAIL_NULL(asset);
 	AAsset_seek(asset, p_position, SEEK_END);
 	pos = len + p_position;
 }
 
 uint64_t FileAccessAndroid::get_position() const {
+	if (using_unix_fallback) {
+		return unix_file.get_position();
+	}
 	return pos;
 }
 
 uint64_t FileAccessAndroid::get_length() const {
+	if (using_unix_fallback) {
+		return unix_file.get_length();
+	}
 	return len;
 }
 
 bool FileAccessAndroid::eof_reached() const {
+	if (using_unix_fallback) {
+		return unix_file.eof_reached();
+	}
 	return eof;
 }
 
 uint64_t FileAccessAndroid::get_buffer(uint8_t *p_dst, uint64_t p_length) const {
+	if (using_unix_fallback) {
+		return unix_file.get_buffer(p_dst, p_length);
+	}
 	ERR_FAIL_COND_V(!p_dst && p_length > 0, -1);
 
 	int r = AAsset_read(asset, p_dst, p_length);
@@ -134,18 +173,41 @@ uint64_t FileAccessAndroid::get_buffer(uint8_t *p_dst, uint64_t p_length) const 
 }
 
 int64_t FileAccessAndroid::_get_size(const String &p_file) {
-	return AAsset_getLength64(asset);
+	// p_file is a resource path - try APK assets first, then filesystem fallback.
+	String path = fix_path(p_file).simplify_path();
+	if (path.begins_with("/")) {
+		path = path.substr(1);
+	} else if (path.begins_with("res://")) {
+		path = path.substr(6);
+	}
+	AAsset *at = AAssetManager_open(asset_manager, path.utf8().get_data(), AASSET_MODE_STREAMING);
+	if (at) {
+		int64_t s = AAsset_getLength64(at);
+		AAsset_close(at);
+		return s;
+	}
+	return unix_file._get_size(p_file);
 }
 
 Error FileAccessAndroid::get_error() const {
+	if (using_unix_fallback) {
+		return unix_file.get_error();
+	}
 	return eof ? ERR_FILE_EOF : OK; // not sure what else it may happen
 }
 
 void FileAccessAndroid::flush() {
+	if (using_unix_fallback) {
+		unix_file.flush();
+		return;
+	}
 	ERR_FAIL();
 }
 
 bool FileAccessAndroid::store_buffer(const uint8_t *p_src, uint64_t p_length) {
+	if (using_unix_fallback) {
+		return unix_file.store_buffer(p_src, p_length);
+	}
 	ERR_FAIL_V(false);
 }
 
@@ -159,12 +221,12 @@ bool FileAccessAndroid::file_exists(const String &p_path) {
 
 	AAsset *at = AAssetManager_open(asset_manager, path.utf8().get_data(), AASSET_MODE_STREAMING);
 
-	if (!at) {
-		return false;
+	if (at) {
+		AAsset_close(at);
+		return true;
 	}
-
-	AAsset_close(at);
-	return true;
+	// Fallback to filesystem for .godot caches etc.
+	return unix_file.file_exists(p_path);
 }
 
 void FileAccessAndroid::close() {

@@ -68,6 +68,8 @@
 #include "scene/3d/camera_3d.h"
 #include "scene/main/window.h"
 #include "editor/embedded_editor_screen.h"
+#include "scene/main/canvas_layer.h"
+#include "scene/gui/texture_rect.h"
 #include "scene/property_list_helper.h"
 #include "scene/register_scene_types.h"
 #include "scene/resources/packed_scene.h"
@@ -4526,62 +4528,94 @@ int Main::start() {
 			OS::get_singleton()->benchmark_end_measure("Startup", "Editor");
 		}
 
+		// If --embed-editor was not passed on the command line, check the project
+		// setting (editor/embed_editor_scene) so Quest APKs can activate embed mode
+		// via project.godot without a custom CLI arg.
+		if (editor && embedded_editor_scene.is_empty()) {
+			String embed_setting = GLOBAL_GET("editor/embed_editor_scene");
+			if (!embed_setting.is_empty()) {
+				embedded_editor_scene = embed_setting;
+			}
+		}
+
 		if (editor && !embedded_editor_scene.is_empty()) {
-			// Embedded editor: the scene passed to --embed-editor IS the game. It is
-			// opened as the editor's edited scene, and the whole editor (EditorNode)
-			// is moved into a dedicated window, docked as a 2D panel on the right. A
-			// camera in that same window renders the shared World3D, so the live game
-			// is visible in the strip left of the editor panel. Because the editor
-			// edits the very scene the game shows, every edit is reflected immediately.
+			// Embedded editor: game runs live, editor UI visible as overlay.
 			//
-			// Shutdown safety: we move the WHOLE EditorNode subtree (not just its
-			// gui_base). Teardown frees the editor's children in the same relative
-			// order as a normal editor, because some editor objects are owned both by
-			// the plugin system and parented into the GUI (e.g. the Version Control
-			// plugin's PopupMenu). Moving only gui_base flipped that order and caused
-			// a double-free crash at exit.
+			// Android/Quest: editor moves to SubViewport (offscreen), game
+			//                runs in root (XR swapchain). Editor texture shown
+			//                as small CanvasLayer overlay.
+			//
+			// Desktop: game scene instantiated in root alongside EditorNode.
+			//          Editor stays in root so Cmd+B and all shortcuts work.
+			//          The game renders behind the editor panels.
+
 			EditorNode *ed = EditorNode::get_singleton();
-			Node *edited = ed->get_editor_data().get_edited_scene_root();
-			String edited_path = edited ? edited->get_scene_file_path() : String();
-			if (edited_path != embedded_editor_scene) {
-				ed->load_scene(embedded_editor_scene);
-			}
-			// Re-fetch after load_scene — the root may have changed.
-			edited = ed->get_editor_data().get_edited_scene_root();
 
-			Window *root_win = Object::cast_to<Window>(sml->get_root());
-			if (root_win) {
-				root_win->set_position(Vector2i(1600, 0));
-			}
+			// Load the game scene.
+			Ref<PackedScene> ps = ResourceLoader::load(embedded_editor_scene);
+			if (ps.is_valid()) {
+#ifdef ANDROID_ENABLED
+				// Step 1: Create offscreen SubViewport for editor.
+				SubViewport *editor_vp = memnew(SubViewport);
+				editor_vp->set_name("EmbeddedEditorVP");
+				editor_vp->set_size(Size2i(1920, 1080));
+				editor_vp->set_use_xr(false);
+				editor_vp->set_update_mode(SubViewport::UPDATE_ALWAYS);
+				sml->get_root()->add_child(editor_vp);
 
-			Window *game_window = memnew(Window);
-			game_window->set_name("EmbeddedGameWindow");
-			game_window->set_title("Embedded Editor");
-			game_window->set_size(Size2i(1600, 900));
-			game_window->set_position(Vector2i(0, 0));
-			sml->get_root()->add_child(game_window);
+				// Step 2: Move EditorNode from root to SubViewport.
+				Node *editor_parent = ed->get_parent();
+				if (editor_parent) {
+					editor_parent->remove_child(ed);
+				}
+				editor_vp->add_child(ed);
+				WARN_PRINT("EE-XR-EMBED: EditorNode moved to SubViewport");
 
-			// The game: a camera rendering the editor's shared world (same live scene)
-			// in the strip left of the editor panel. Aim past the scene's center to the
-			// right so the cube lands inside the left strip instead of under the panel.
-			Camera3D *game_cam = memnew(Camera3D);
-			game_cam->set_name("EmbeddedGameCamera");
-			// Exclude the editor gizmo/grid layers (24-27) so only the scene renders.
-			game_cam->set_cull_mask((1 << 20) - 1);
-			game_window->add_child(game_cam);
-			game_cam->look_at_from_position(Vector3(0, 1.5, 4), Vector3(0, 3, 0), Vector3(0, 1, 0));
-			game_cam->make_current();
+				// Step 3: Editor loads the scene (renders in SubViewport).
+				Node *edited = ed->get_editor_data().get_edited_scene_root();
+				String edited_path = edited ? edited->get_scene_file_path() : String();
+				if (edited_path != embedded_editor_scene) {
+					ed->load_scene(embedded_editor_scene);
+				}
 
-			// --- In-scene editor screen: a flat quad in the3D scene showing the
-			// full editor UI.  The texture comes from the root viewport (which holds
-			// the editor), a different viewport than the one the game camera writes to.
-			Node *scene_root = edited;
-			if (scene_root) {
-				EmbeddedEditorScreen *screen = memnew(EmbeddedEditorScreen);
-				screen->set_name("EmbeddedEditorScreen");
-				screen->set_position(Vector3(0, 3.0, 0));
-				scene_root->add_child(screen);
-				screen->set_owner(scene_root);
+				// Step 4: Instantiate game scene in root for XR rendering.
+				Node *game_root = ps->instantiate();
+				game_root->set_name("GameRoot");
+				sml->get_root()->add_child(game_root);
+				if (SceneTree *tree = Object::cast_to<SceneTree>(sml)) {
+					tree->set_current_scene(game_root);
+				}
+				WARN_PRINT("EE-XR-EMBED: game scene instantiated in root for XR");
+
+				// Step 5: CanvasLayer overlay showing editor texture.
+				CanvasLayer *overlay = memnew(CanvasLayer);
+				overlay->set_name("EditorOverlay");
+				overlay->set_layer(100);
+				TextureRect *rect = memnew(TextureRect);
+				rect->set_name("EditorTexture");
+				rect->set_texture(editor_vp->get_texture());
+				rect->set_size(Size2(600, 338));
+				rect->set_position(Point2(20, 20));
+				rect->set_expand_mode(TextureRect::EXPAND_IGNORE_SIZE);
+				rect->set_stretch_mode(TextureRect::STRETCH_KEEP_ASPECT_CENTERED);
+				overlay->add_child(rect);
+				sml->get_root()->add_child(overlay);
+				WARN_PRINT("EE-XR-EMBED: overlay added (600×338 at 20,20)");
+#else
+				// Desktop: EditorNode stays in root (Cmd+B works).
+				// Instantiate game scene in root so it runs live behind the
+				// editor panels. Press Cmd+B or use the play button to test
+				// standalone game behavior.
+				Node *game_root = ps->instantiate();
+				game_root->set_name("GameRoot");
+				sml->get_root()->add_child(game_root);
+				if (SceneTree *tree = Object::cast_to<SceneTree>(sml)) {
+					tree->set_current_scene(game_root);
+				}
+				WARN_PRINT("EE-XR-EMBED: game scene instantiated in root (desktop)");
+#endif
+			} else {
+				WARN_PRINT("EE-XR-EMBED: failed to load scene: " + embedded_editor_scene);
 			}
 		}
 #endif

@@ -32,6 +32,8 @@
 
 #include "core/io/file_access.h"
 
+#include "drivers/unix/file_access_unix.h"
+
 #include <android/asset_manager.h>
 #include <android/log.h>
 #include <jni.h>
@@ -47,6 +49,8 @@ class FileAccessAndroid : public FileAccess {
 	mutable bool eof = false;
 	String absolute_path;
 	String path_src;
+	FileAccessUnix unix_file;
+	bool using_unix_fallback = false;
 
 	void _close();
 

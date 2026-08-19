@@ -687,6 +687,7 @@ void ProjectSettings::_handle_editor_setting_compat(const String &p_original_set
  *    If nothing was found, error out.
  */
 Error ProjectSettings::_setup(const String &p_path, const String &p_main_pack, bool p_upwards, bool p_ignore_override) {
+	ERR_PRINT("EE-SETUP: p_path='" + p_path + "' resource_dir='" + OS::get_singleton()->get_resource_dir() + "' main_pack='" + p_main_pack + "'");
 	if (!OS::get_singleton()->get_resource_dir().is_empty()) {
 		// OS will call ProjectSettings->get_resource_path which will be empty if not overridden!
 		// If the OS would rather use a specific location, then it will not be empty.
@@ -717,6 +718,7 @@ Error ProjectSettings::_setup(const String &p_path, const String &p_main_pack, b
 	}
 
 	String exec_path = OS::get_singleton()->get_executable_path();
+	ERR_PRINT("EE-SETUP: exec_path='" + exec_path + "' resource_path='" + resource_path + "'");
 
 	if (!exec_path.is_empty()) {
 		// We do several tests sequentially until one succeeds to find a PCK,
@@ -775,7 +777,22 @@ Error ProjectSettings::_setup(const String &p_path, const String &p_main_pack, b
 
 #ifdef ANDROID_ENABLED
 	// Attempt to load sparse PCK assets.
-	_load_resource_pack("res://assets.sparsepck", false, 0, true);
+	{
+		bool pack_ok = _load_resource_pack("res://assets.sparsepck", false, 0, true);
+		ERR_PRINT("EE-ANDROID: sparse_pck_load=" + itos(pack_ok));
+	}
+
+	// On Android TOOLS_ENABLED, get_resource_dir() returns "" which skips the
+	// settings-loading block below.  But res:// still works via FileAccessAndroid
+	// (APK assets).  Try loading project settings here.
+	if (resource_path.is_empty()) {
+		Error err = _load_settings_text_or_binary("res://project.godot", "res://project.binary");
+		ERR_PRINT("EE-ANDROID: settings_load=" + itos(err));
+		if (err == OK) {
+			resource_path = "res://";
+			return err;
+		}
+	}
 #endif
 
 	// Try to use the filesystem for files, according to OS.

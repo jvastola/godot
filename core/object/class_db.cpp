@@ -600,8 +600,13 @@ Object *ClassDB::_instantiate_internal(const StringName &p_class, bool p_require
 
 #ifdef TOOLS_ENABLED
 	if ((ti->api == API_EDITOR || ti->api == API_EDITOR_EXTENSION) && !Engine::get_singleton()->is_editor_hint()) {
-		ERR_PRINT(vformat("Class '%s' can only be instantiated by editor.", String(p_class)));
-		return nullptr;
+		if (String(p_class) == "EmbeddedEditorScreen") {
+			// Allow embedded editor screen to be instantiated during resource scan
+			// even when editor hint is not yet set (e.g., .godot cache).
+		} else {
+			ERR_PRINT(vformat("Class '%s' can only be instantiated by editor.", String(p_class)));
+			return nullptr;
+		}
 	}
 #endif
 

@@ -22,3 +22,7 @@ config/features=PackedStringArray("4.8")
 
 window/size/viewport_width=1280
 window/size/viewport_height=720
+
+[editor]
+
+embed_editor_scene="res://main.tscn"

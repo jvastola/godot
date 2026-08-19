@@ -37,9 +37,7 @@
 #include "java_godot_wrapper.h"
 #include "net_socket_android.h"
 
-#ifndef TOOLS_ENABLED
 #include "file_access_android.h"
-#endif
 
 #include "core/config/engine.h"
 #include "core/extension/gdextension_manager.h"
@@ -109,7 +107,7 @@ void OS_Android::initialize_core() {
 	OS_Unix::initialize_core();
 
 #ifdef TOOLS_ENABLED
-	FileAccess::make_default<FileAccessUnix>(FileAccess::ACCESS_RESOURCES);
+	FileAccess::make_default<FileAccessAndroid>(FileAccess::ACCESS_RESOURCES);
 #else // TOOLS_ENABLED
 	FileAccess::make_default<FileAccessAndroid>(FileAccess::ACCESS_RESOURCES);
 #if defined(OVERRIDE_PATH_ENABLED)
