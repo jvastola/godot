@@ -22,6 +22,8 @@ USE_LIGHTMAP = false
 USE_SH_LIGHTMAP = false
 USE_LIGHTMAP_CAPTURE = false
 USE_MULTIVIEW = false
+USE_DECALS = false
+USE_DECAL_MIPMAPS = false
 RENDER_SHADOWS = false
 RENDER_SHADOWS_LINEAR = false
 SHADOW_MODE_PCF_5 = false
@@ -698,14 +700,14 @@ void vertex_shader(vec4 vertex_angle_attrib_input,
 	vertex = (model_matrix * vec4(vertex, 1.0)).xyz;
 
 #ifdef NORMAL_USED
+	// For correct non-uniform scale handling, normal has to be transformed by normal matrix, but tangent vectors need to use model matrix as is
 	normal = model_normal_matrix * normal;
 #endif
 
 #if defined(TANGENT_USED) || defined(NORMAL_MAP_USED) || defined(BENT_NORMAL_MAP_USED) || defined(LIGHT_ANISOTROPY_USED)
-
-	tangent = model_normal_matrix * tangent;
-	binormal = model_normal_matrix * binormal;
-
+	// For non-uniform scale, this produces non-orthogonal TBNs; ideally binormal should be reconstructed in fragment shader with cross
+	tangent = mat3(model_matrix) * tangent;
+	binormal = mat3(model_matrix) * binormal;
 #endif
 #endif
 
@@ -730,14 +732,16 @@ void vertex_shader(vec4 vertex_angle_attrib_input,
 #if !defined(SKIP_TRANSFORM_USED) && !defined(VERTEX_WORLD_COORDS_USED)
 
 	vertex = (modelview * vec4(vertex, 1.0)).xyz;
+
 #ifdef NORMAL_USED
+	// For correct non-uniform scale handling, normal has to be transformed by normal matrix, but tangent vectors need to use model matrix as is
 	normal = modelview_normal * normal;
 #endif
 
 #if defined(TANGENT_USED) || defined(NORMAL_MAP_USED) || defined(BENT_NORMAL_MAP_USED) || defined(LIGHT_ANISOTROPY_USED)
-
-	binormal = modelview_normal * binormal;
-	tangent = modelview_normal * tangent;
+	// For non-uniform scale, this produces non-orthogonal TBNs; ideally binormal should be reconstructed in fragment shader with cross
+	tangent = mat3(modelview) * tangent;
+	binormal = mat3(modelview) * binormal;
 #endif
 #endif // !defined(SKIP_TRANSFORM_USED) && !defined(VERTEX_WORLD_COORDS_USED)
 
@@ -757,8 +761,7 @@ void vertex_shader(vec4 vertex_angle_attrib_input,
 
 	vertex_interp = vertex;
 
-	// Normalize TBN vectors before interpolation, per MikkTSpace.
-	// See: http://www.mikktspace.com/
+	// Normalize TBN vectors to account for model/normal transforms that may have scale
 #ifdef NORMAL_USED
 	normal_interp = normalize(normal);
 #endif
@@ -1036,6 +1039,7 @@ void main() {
 9-reflection probe 2
 10-area light LUT 1
 11-area light LUT 2
+12-decal texture atlas
 
 */
 
@@ -1148,6 +1152,38 @@ uniform samplerCube refprobe2_texture; // texunit:-9
 #endif // SECOND_REFLECTION_PROBE
 
 #endif // DISABLE_REFLECTION_PROBE
+
+#ifdef USE_DECALS
+uniform sampler2D decal_atlas; // texunit:-12
+
+uniform uint decal_count;
+uniform uint decals0;
+uniform uint decals1;
+
+struct DecalData {
+	mat4 xform; //to decal transform
+	vec3 inv_extents;
+	float albedo_mix;
+	vec4 albedo_rect;
+	vec4 normal_rect;
+	vec4 orm_rect;
+	vec4 emission_rect;
+	vec4 modulate;
+	float emission_energy;
+	uint mask;
+	float upper_fade;
+	float lower_fade;
+	mat3x4 normal_xform;
+	vec3 normal;
+	float normal_fade;
+};
+
+layout(std140) uniform DecalDataBlock { // ubo:15
+	DecalData data[MAX_DECALS];
+}
+decal_data_block;
+
+#endif // USE_DECALS
 
 layout(std140) uniform GlobalShaderUniformData { //ubo:1
 	vec4 global_shader_uniforms[MAX_GLOBAL_SHADER_UNIFORMS];
@@ -2397,6 +2433,84 @@ void main() {
 	// Convert colors to linear
 	albedo = srgb_to_linear(albedo);
 	emission = srgb_to_linear(emission);
+
+#ifdef USE_DECALS
+
+	vec3 vertex_ddx = dFdx(vertex);
+	vec3 vertex_ddy = dFdy(vertex);
+
+	for (uint i = 0u; i < decal_count; i++) {
+		uint decal_index = (i > 3u) ? ((decals1 >> ((i - 4u) * 8u)) & uint(0xFF)) : ((decals0 >> (i * 8u)) & uint(0xFF));
+		if (decal_index == uint(0xFF)) {
+			break;
+		}
+
+		vec3 uv_local = (decal_data_block.data[decal_index].xform * vec4(vertex, 1.0)).xyz;
+		if (any(lessThan(uv_local, vec3(0.0, -1.0, 0.0))) || any(greaterThan(uv_local, vec3(1.0)))) {
+			continue; //out of decal
+		}
+
+		float fade = pow(1.0 - (uv_local.y > 0.0 ? uv_local.y : -uv_local.y), uv_local.y > 0.0 ? decal_data_block.data[decal_index].upper_fade : decal_data_block.data[decal_index].lower_fade);
+
+		if (decal_data_block.data[decal_index].normal_fade > 0.0) {
+			fade *= smoothstep(decal_data_block.data[decal_index].normal_fade, 1.0, dot(vec3(geo_normal), decal_data_block.data[decal_index].normal) * 0.5 + 0.5);
+		}
+
+		//we need ddx/ddy for mipmaps, so simulate them
+		vec2 ddx = (decal_data_block.data[decal_index].xform * vec4(vertex_ddx, 0.0)).xz;
+		vec2 ddy = (decal_data_block.data[decal_index].xform * vec4(vertex_ddy, 0.0)).xz;
+
+		if (decal_data_block.data[decal_index].albedo_rect != vec4(0.0)) {
+			//has albedo
+			vec4 decal_albedo;
+#ifdef USE_DECAL_MIPMAPS
+			decal_albedo = textureGrad(decal_atlas, uv_local.xz * decal_data_block.data[decal_index].albedo_rect.zw + decal_data_block.data[decal_index].albedo_rect.xy, ddx * decal_data_block.data[decal_index].albedo_rect.zw, ddy * decal_data_block.data[decal_index].albedo_rect.zw);
+#else
+			decal_albedo = textureLod(decal_atlas, uv_local.xz * decal_data_block.data[decal_index].albedo_rect.zw + decal_data_block.data[decal_index].albedo_rect.xy, 0.0);
+#endif // USE_DECAL_MIPMAPS
+			decal_albedo.rgb = srgb_to_linear(decal_albedo.rgb) * decal_data_block.data[decal_index].modulate.rgb;
+			decal_albedo.a *= fade * decal_data_block.data[decal_index].modulate.a;
+			albedo = vec3(mix(vec3(albedo), decal_albedo.rgb, decal_albedo.a * decal_data_block.data[decal_index].albedo_mix));
+
+			if (decal_data_block.data[decal_index].normal_rect != vec4(0.0)) {
+				vec3 decal_normal;
+#ifdef USE_DECAL_MIPMAPS
+				decal_normal = textureGrad(decal_atlas, uv_local.xz * decal_data_block.data[decal_index].normal_rect.zw + decal_data_block.data[decal_index].normal_rect.xy, ddx * decal_data_block.data[decal_index].normal_rect.zw, ddy * decal_data_block.data[decal_index].normal_rect.zw).xyz;
+#else
+				decal_normal = textureLod(decal_atlas, uv_local.xz * decal_data_block.data[decal_index].normal_rect.zw + decal_data_block.data[decal_index].normal_rect.xy, 0.0).xyz;
+#endif // USE_DECAL_MIPMAPS
+				decal_normal.xy = decal_normal.xy * vec2(2.0, -2.0) - vec2(1.0, -1.0); //users prefer flipped y normal maps in most authoring software
+				decal_normal.z = sqrt(max(0.0, 1.0 - dot(decal_normal.xy, decal_normal.xy)));
+				//convert to view space, use xzy because y is up
+				decal_normal = (mat3(decal_data_block.data[decal_index].normal_xform) * decal_normal.xzy).xyz;
+
+				normal = vec3(normalize(mix(vec3(normal), decal_normal, decal_albedo.a)));
+			}
+
+			if (decal_data_block.data[decal_index].orm_rect != vec4(0.0)) {
+				vec3 decal_orm;
+#ifdef USE_DECAL_MIPMAPS
+				decal_orm = textureGrad(decal_atlas, uv_local.xz * decal_data_block.data[decal_index].orm_rect.zw + decal_data_block.data[decal_index].orm_rect.xy, ddx * decal_data_block.data[decal_index].orm_rect.zw, ddy * decal_data_block.data[decal_index].orm_rect.zw).xyz;
+#else
+				decal_orm = textureLod(decal_atlas, uv_local.xz * decal_data_block.data[decal_index].orm_rect.zw + decal_data_block.data[decal_index].orm_rect.xy, 0.0).xyz;
+#endif // USE_DECAL_MIPMAPS
+				ao = mix(float(ao), decal_orm.r, decal_albedo.a);
+				roughness = mix(float(roughness), decal_orm.g, decal_albedo.a);
+				metallic = mix(float(metallic), decal_orm.b, decal_albedo.a);
+			}
+		}
+
+		if (decal_data_block.data[decal_index].emission_rect != vec4(0.0)) {
+			//emission is additive, so its independent from albedo
+#ifdef USE_DECAL_MIPMAPS
+			emission += srgb_to_linear(textureGrad(decal_atlas, uv_local.xz * decal_data_block.data[decal_index].emission_rect.zw + decal_data_block.data[decal_index].emission_rect.xy, ddx * decal_data_block.data[decal_index].emission_rect.zw, ddy * decal_data_block.data[decal_index].emission_rect.zw).xyz) * decal_data_block.data[decal_index].modulate.rgb * decal_data_block.data[decal_index].emission_energy * fade;
+#else
+			emission += srgb_to_linear(textureLod(decal_atlas, uv_local.xz * decal_data_block.data[decal_index].emission_rect.zw + decal_data_block.data[decal_index].emission_rect.xy, 0.0).xyz) * decal_data_block.data[decal_index].modulate.rgb * decal_data_block.data[decal_index].emission_energy * fade;
+#endif // USE_DECAL_MIPMAPS
+		}
+	}
+#endif //!USE_DECALS
+
 	// TODO Backlight and transmittance when used
 #ifndef MODE_UNSHADED
 	vec3 f0 = F0(metallic, specular, albedo);

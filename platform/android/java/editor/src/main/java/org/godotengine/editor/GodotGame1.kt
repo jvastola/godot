@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  godot_app_delegate.h                                                  */
+/*  GodotGame1.kt                                                         */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -28,16 +28,13 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
-#pragma once
+package org.godotengine.editor
 
-#import <UIKit/UIKit.h>
-
-typedef NSObject<UIApplicationDelegate, UIWindowSceneDelegate> GDTAppDelegateServiceProtocol;
-
-@interface GDTApplicationDelegate : NSObject <UIApplicationDelegate, UIWindowSceneDelegate>
-
-@property(class, readonly, strong) NSArray<GDTAppDelegateServiceProtocol *> *services;
-
-+ (void)addService:(GDTAppDelegateServiceProtocol *)service;
-
-@end
+/**
+ * Second instance for the Game window.
+ *
+ * Used when multi-instance is enabled.
+ */
+class GodotGame1: GodotGame() {
+	override fun getEditorWindowInfo() = RUN_GAME_INFO_1
+}

@@ -763,14 +763,10 @@ void GDScriptParser::parse_program() {
 					break;
 				}
 			}
-		} else if (check(GDScriptTokenizer::Token::LITERAL) && current.literal.get_type() == Variant::STRING) {
-			// Allow strings in class body as multiline comments.
-			advance();
-			if (!match(GDScriptTokenizer::Token::NEWLINE)) {
-				push_error("Expected newline after comment string.");
-			}
 		} else {
-			break;
+			if (!parse_standalone_string()) {
+				break;
+			}
 		}
 	}
 
@@ -806,12 +802,7 @@ void GDScriptParser::parse_program() {
 				can_have_class_or_extends = false;
 				break;
 			case GDScriptTokenizer::Token::LITERAL:
-				if (current.literal.get_type() == Variant::STRING) {
-					// Allow strings in class body as multiline comments.
-					advance();
-					if (!match(GDScriptTokenizer::Token::NEWLINE)) {
-						push_error("Expected newline after comment string.");
-					}
+				if (parse_standalone_string()) {
 					break;
 				}
 				[[fallthrough]];
@@ -1201,12 +1192,7 @@ void GDScriptParser::parse_class_body(bool p_is_multiline) {
 				class_end = true;
 				break;
 			case GDScriptTokenizer::Token::LITERAL:
-				if (current.literal.get_type() == Variant::STRING) {
-					// Allow strings in class body as multiline comments.
-					advance();
-					if (!match(GDScriptTokenizer::Token::NEWLINE)) {
-						push_error("Expected newline after comment string.");
-					}
+				if (parse_standalone_string()) {
 					break;
 				}
 				[[fallthrough]];
@@ -2203,12 +2189,6 @@ GDScriptParser::Node *GDScriptParser::parse_statement() {
 					case Node::LAMBDA:
 						// Standalone lambdas can't be used, so make this an error.
 						push_error("Standalone lambdas cannot be accessed. Consider assigning it to a variable.", expression);
-						break;
-					case Node::LITERAL:
-						// Allow strings as multiline comments.
-						if (static_cast<GDScriptParser::LiteralNode *>(expression)->value.get_type() != Variant::STRING) {
-							push_warning(expression, GDScriptWarning::STANDALONE_EXPRESSION);
-						}
 						break;
 					case Node::TERNARY_OPERATOR:
 						push_warning(expression, GDScriptWarning::STANDALONE_TERNARY);
@@ -3930,6 +3910,21 @@ GDScriptParser::TypeNode *GDScriptParser::parse_type(bool p_allow_void) {
 	return type;
 }
 
+bool GDScriptParser::parse_standalone_string() {
+	if (check(GDScriptTokenizer::Token::LITERAL) && current.literal.get_type() == Variant::STRING) {
+		// For compatibility we allow standalone strings without erroring.
+		advance();
+#ifdef DEBUG_ENABLED
+		push_warning(previous.start_line, previous.start_column, previous.end_line, previous.end_column, GDScriptWarning::STANDALONE_EXPRESSION);
+#endif
+		if (!match(GDScriptTokenizer::Token::NEWLINE)) {
+			push_error("Expected newline after comment string.");
+		}
+		return true;
+	}
+	return false;
+}
+
 #ifdef TOOLS_ENABLED
 enum DocLineState {
 	DOC_LINE_NORMAL,
@@ -4954,14 +4949,18 @@ bool GDScriptParser::export_annotations(AnnotationNode *p_annotation, Node *p_ta
 
 		Variant::Type enum_type = Variant::INT;
 
-		if (export_type.kind == DataType::BUILTIN && export_type.builtin_type == Variant::STRING) {
-			enum_type = Variant::STRING;
+		if (export_type.kind == DataType::BUILTIN) {
+			if (export_type.builtin_type == Variant::STRING) {
+				enum_type = Variant::STRING;
+			} else if (export_type.builtin_type == Variant::STRING_NAME) {
+				enum_type = Variant::STRING_NAME;
+			}
 		}
 
 		variable->export_info.type = enum_type;
 
 		if (!export_type.is_variant() && (export_type.kind != DataType::BUILTIN || export_type.builtin_type != enum_type)) {
-			Vector<Variant::Type> expected_types = { Variant::INT, Variant::STRING };
+			Vector<Variant::Type> expected_types = { Variant::INT, Variant::STRING, Variant::STRING_NAME };
 			push_error(_get_annotation_error_string(p_annotation->name, expected_types, variable->type_constraint), p_annotation);
 			return false;
 		}
