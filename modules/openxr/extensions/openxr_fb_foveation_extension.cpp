@@ -153,7 +153,11 @@ void *OpenXRFBFoveationExtension::set_system_properties_and_get_next_pointer(voi
 
 void *OpenXRFBFoveationExtension::set_swapchain_create_info_and_get_next_pointer(void *p_next_pointer) {
 	void *next = p_next_pointer;
-	if (is_enabled()) {
+	// Only make the swapchain foveation-capable when foveation is on. Since e27f952ac4
+	// this was unconditional, and with level 0 the Meta runtime still applies its own
+	// foveation (incl. peripheral tile turn-off) to an FDM swapchain, flashing black
+	// tiles at the view edges on Quest 3.
+	if (is_enabled() && foveation_level > 0) {
 		swapchain_create_info_foveation_fb.next = next;
 		next = &swapchain_create_info_foveation_fb;
 
